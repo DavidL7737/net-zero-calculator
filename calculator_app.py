@@ -1,22 +1,39 @@
 #!/usr/bin/env python3
 """
-HGV/Van Electric vs Diesel Calculator - Streamlit Application
+HGV/Van Electric vs Diesel Calculator - Embeddable Version
+Admin features hidden from regular users
 """
 
 import streamlit as st
 import pandas as pd
 import csv
 import os
+import hashlib
 from datetime import datetime
-import json
 
-# Configure Streamlit page
+# Configure Streamlit page for embedding
 st.set_page_config(
     page_title="HGV/Van Electric vs Diesel Calculator",
     page_icon="🚛",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"  # Hide sidebar by default for embedding
 )
+
+# Hide Streamlit elements for clean embedding
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {display: none;}
+    .stDecoration {display: none;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# Admin password hash (change this to your desired password)
+# Current password is "admin123" - change the hash below for security
+ADMIN_PASSWORD_HASH = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"  # admin123
 
 # Ensure data directory exists
 os.makedirs('data', exist_ok=True)
@@ -170,6 +187,18 @@ VEHICLE_DATA = {
 }
 
 
+def hash_password(password):
+    """Hash password for admin authentication"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def check_admin_access():
+    """Check if user has admin access"""
+    if 'admin_authenticated' not in st.session_state:
+        st.session_state.admin_authenticated = False
+    return st.session_state.admin_authenticated
+
+
 def format_currency(amount):
     """Format currency with UK formatting"""
     return f"£{amount:,.0f}"
@@ -253,7 +282,7 @@ def calculate_electricity_demand(vehicle_key, annual_mileage, num_vehicles):
 
 
 def save_calculation_data(vehicle_type, num_vehicles, postcode, purchase_year, annual_mileage):
-    """Save calculation data to CSV for harvesting"""
+    """Save calculation data to CSV for harvesting (silent - no user notification)"""
     try:
         calculation_record = {
             'timestamp': datetime.now().isoformat(),
@@ -277,12 +306,140 @@ def save_calculation_data(vehicle_type, num_vehicles, postcode, purchase_year, a
                 writer.writeheader()
             
             writer.writerow(calculation_record)
+    except Exception:
+        pass  # Silent fail - don't show errors to users
+
+
+def admin_panel():
+    """Admin panel for data analysis - only shown to authenticated admins"""
+    st.header("🔐 Admin Dashboard")
+    
+    # Logout button
+    if st.button("🚪 Logout", key="logout"):
+        st.session_state.admin_authenticated = False
+        st.rerun()
+    
+    try:
+        if os.path.exists('data/calculations.csv'):
+            df = pd.read_csv('data/calculations.csv')
+            
+            if not df.empty:
+                st.subheader("📊 Usage Statistics")
+                
+                # Key metrics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Calculations", len(df))
+                with col2:
+                    st.metric("Total Vehicles", df['num_vehicles'].sum())
+                with col3:
+                    st.metric("Unique Postcodes", df['postcode'].nunique())
+                with col4:
+                    st.metric("Total Electricity Demand", f"{df['estimated_electricity_demand'].sum():,} kWh")
+                
+                st.subheader("📈 Recent Activity")
+                st.dataframe(df.tail(20), use_container_width=True)
+                
+                # Demand analysis by postcode
+                if 'postcode' in df.columns and not df['postcode'].isna().all():
+                    st.subheader("🗺️ Demand by Postcode")
+                    
+                    postcode_summary = df.groupby('postcode').agg({
+                        'num_vehicles': 'sum',
+                        'estimated_electricity_demand': 'sum',
+                        'timestamp': 'count'
+                    }).rename(columns={'timestamp': 'calculations'}).reset_index()
+                    
+                    postcode_summary = postcode_summary.sort_values('estimated_electricity_demand', ascending=False)
+                    st.dataframe(postcode_summary, use_container_width=True)
+                
+                # Vehicle type analysis
+                st.subheader("🚛 Vehicle Type Breakdown")
+                vehicle_summary = df.groupby('vehicle_type').agg({
+                    'num_vehicles': 'sum',
+                    'estimated_electricity_demand': 'sum',
+                    'timestamp': 'count'
+                }).rename(columns={'timestamp': 'calculations'}).reset_index()
+                
+                vehicle_summary = vehicle_summary.sort_values('num_vehicles', ascending=False)
+                st.dataframe(vehicle_summary, use_container_width=True)
+                
+                # Purchase year trends
+                if 'purchase_year' in df.columns:
+                    st.subheader("📅 Purchase Year Distribution")
+                    year_summary = df.groupby('purchase_year').agg({
+                        'num_vehicles': 'sum',
+                        'estimated_electricity_demand': 'sum'
+                    }).reset_index()
+                    
+                    st.bar_chart(year_summary.set_index('purchase_year')['num_vehicles'])
+                
+                # Download functionality
+                st.subheader("💾 Data Export")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Full data export
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download All Data (CSV)",
+                        data=csv,
+                        file_name=f'vehicle_calculations_{datetime.now().strftime("%Y%m%d")}.csv',
+                        mime='text/csv'
+                    )
+                
+                with col2:
+                    # Summary export
+                    summary_data = {
+                        'total_calculations': len(df),
+                        'total_vehicles': int(df['num_vehicles'].sum()),
+                        'total_electricity_demand_kwh': int(df['estimated_electricity_demand'].sum()),
+                        'unique_postcodes': int(df['postcode'].nunique()),
+                        'export_date': datetime.now().isoformat()
+                    }
+                    
+                    st.download_button(
+                        label="📊 Download Summary (JSON)",
+                        data=pd.Series(summary_data).to_json(indent=2),
+                        file_name=f'summary_{datetime.now().strftime("%Y%m%d")}.json',
+                        mime='application/json'
+                    )
+                    
+            else:
+                st.info("No calculation data available yet.")
+        else:
+            st.info("No calculation data available yet.")
     except Exception as e:
-        st.error(f"Error saving data: {e}")
+        st.error(f"Error loading data: {e}")
 
 
-# Main Streamlit App
+# Main Application
 def main():
+    # Check for admin access via URL parameter (hidden admin entry)
+    query_params = st.experimental_get_query_params()
+    if 'admin' in query_params and not check_admin_access():
+        st.title("🔐 Admin Login")
+        
+        admin_password = st.text_input("Enter admin password:", type="password", key="admin_pw")
+        
+        if st.button("🔑 Login", key="admin_login"):
+            if hash_password(admin_password) == ADMIN_PASSWORD_HASH:
+                st.session_state.admin_authenticated = True
+                st.success("✅ Admin access granted!")
+                st.rerun()
+            else:
+                st.error("❌ Invalid password")
+        
+        st.info("💡 Access this page with ?admin=true in the URL to show admin login")
+        return
+    
+    # Show admin panel if authenticated
+    if check_admin_access():
+        admin_panel()
+        return
+    
+    # Regular user interface
     st.title("🚛 HGV/Van Electric versus Diesel Calculator")
     st.markdown("**Compare total cost of ownership and environmental impact for commercial vehicles**")
     
@@ -389,56 +546,18 @@ def main():
             # Vehicle testing info
             st.info(f"🔧 **Vehicle Testing**: {vehicle['test_frequency']}")
             
-            # Save data for harvesting
+            # Save data silently in background (users don't see this)
             if postcode:
                 save_calculation_data(vehicle_type, num_vehicles, postcode, purchase_year, annual_mileage)
-                st.success("✅ Calculation data saved for analysis")
     
     # Assumptions section
     st.header("📋 Assumptions and Sources")
-    if 'vehicle_type' in locals():
+    if selected_vehicle_name:
         vehicle = VEHICLE_DATA[vehicle_type]
         for assumption in vehicle['assumptions']:
             st.write(f"• {assumption}")
     
     st.write("**Sources**: Road Haulage Association (RHA), Logistics UK, Carbon Trust, Science Based Targets initiative (SBTi), Department for Transport (DfT), Energy and Climate Intelligence Unit (ECIU), Society of Motor Manufacturers and Traders (SMMT)")
-    
-    # Data harvesting section (admin view)
-    with st.sidebar:
-        st.header("📊 Admin: Data Analysis")
-        if st.button("📈 View Demand Summary"):
-            try:
-                if os.path.exists('data/calculations.csv'):
-                    df = pd.read_csv('data/calculations.csv')
-                    
-                    if not df.empty:
-                        st.write("**Recent Calculations:**")
-                        st.dataframe(df.tail(10))
-                        
-                        # Summary by postcode
-                        if 'postcode' in df.columns:
-                            postcode_summary = df.groupby('postcode').agg({
-                                'num_vehicles': 'sum',
-                                'estimated_electricity_demand': 'sum'
-                            }).reset_index()
-                            
-                            st.write("**Demand by Postcode:**")
-                            st.dataframe(postcode_summary)
-                            
-                            # Download button for data
-                            csv = df.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Download All Data",
-                                data=csv,
-                                file_name='vehicle_calculations.csv',
-                                mime='text/csv'
-                            )
-                    else:
-                        st.write("No calculation data available yet.")
-                else:
-                    st.write("No calculation data available yet.")
-            except Exception as e:
-                st.error(f"Error loading data: {e}")
 
 
 if __name__ == "__main__":
