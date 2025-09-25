@@ -541,7 +541,7 @@
             }
         }
 
-        function calculateCosts() {
+        async function calculateCosts() {
             const vehicleType = document.getElementById('vehicleType').value;
             const numVehicles = parseInt(document.getElementById('numVehicles').value) || 1;
             const postcode = document.getElementById('postcode').value.trim();
@@ -576,8 +576,14 @@
             displayResults(scaledElectricCosts, scaledDieselCosts, vehicle, numVehicles);
             updateAssumptions(vehicle);
             
-            // Store data for potential backend harvesting
-            storeCalculationData(vehicleType, numVehicles, postcode, purchaseYear, annualMileage, scaledElectricCosts);
+            // Send data to backend for harvesting
+            await sendDataToBackend({
+                vehicleType: vehicleType,
+                numVehicles: numVehicles,
+                postcode: postcode,
+                purchaseYear: purchaseYear,
+                annualMileage: annualMileage
+            });
         }
 
         function calculateElectricCosts(vehicle, purchasePrice, annualMileage, years) {
@@ -732,39 +738,25 @@
             ).join('');
         }
 
-        function storeCalculationData(vehicleType, numVehicles, postcode, purchaseYear, annualMileage, electricCosts) {
-            // This function would store data for backend harvesting
-            const calculationData = {
-                timestamp: new Date().toISOString(),
-                vehicleType: vehicleType,
-                numVehicles: numVehicles,
-                postcode: postcode.toUpperCase(),
-                purchaseYear: purchaseYear,
-                annualMileage: annualMileage,
-                estimatedElectricityDemand: calculateElectricityDemand(vehicleType, annualMileage, numVehicles)
-            };
-            
-            // Store in localStorage (in a real implementation, this would be sent to a backend)
-            let storedData = JSON.parse(localStorage.getItem('vehicleCalculations') || '[]');
-            storedData.push(calculationData);
-            localStorage.setItem('vehicleCalculations', JSON.stringify(storedData));
-            
-            console.log('Stored calculation data:', calculationData);
-        }
-
-        function calculateElectricityDemand(vehicleType, annualMileage, numVehicles) {
-            const vehicle = vehicleData[vehicleType];
-            let annualkWh;
-            
-            if (vehicle.name.includes('HGV')) {
-                // HGV efficiency in miles/kWh
-                annualkWh = annualMileage / vehicle.electricEfficiency;
-            } else {
-                // Van efficiency in kWh/mile  
-                annualkWh = annualMileage * vehicle.electricEfficiency;
+        async function sendDataToBackend(data) {
+            try {
+                const response = await fetch('/api/calculate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to save data');
+                }
+                
+                const result = await response.json();
+                console.log('Data saved successfully:', result);
+            } catch (error) {
+                console.error('Error saving data:', error);
             }
-            
-            return Math.round(annualkWh * numVehicles);
         }
 
         // Add event listener for vehicle type change
