@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-HGV/Van Electric vs Diesel Calculator - Embeddable Version
-Admin features hidden from regular users
+HGV/Van Electric vs Diesel Calculator - Streamlit Application (Updated)
+No deprecation warnings - Ready for production
 """
 
 import streamlit as st
@@ -416,8 +416,8 @@ def admin_panel():
 
 # Main Application
 def main():
-    # Check for admin access via URL parameter (hidden admin entry)
-    query_params = st.experimental_get_query_params()
+    # Check for admin access via URL parameter (hidden admin entry) - FIXED VERSION
+    query_params = st.query_params
     if 'admin' in query_params and not check_admin_access():
         st.title("🔐 Admin Login")
         
